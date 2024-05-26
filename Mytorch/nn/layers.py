@@ -24,9 +24,16 @@ def _get_softmax_dim( ndim: int) -> int:
 class Sequential(Module):
     def __init__(self,*modules):
         super().__init__()
-        self.modules = modules
+        self.modulelist = list(modules)
+    def modules(self):
+        modules=[]
+        for m in self.modulelist:
+            modules.append(m)
+            modules.extend(m.modules())
+        return modules
+    
     def forward(self, x: Tensor) -> Tensor:
-        for module in self.modules:
+        for module in self.modulelist:
             x = module(x)
         return x
 
@@ -94,16 +101,46 @@ class Sigmoid(Module):
         return "(Sigmoid)"
     def __str__(self):
         return "(Sigmoid)"
+    
+class ReLU(Module):
+    def __init__(self):
+        super().__init__()
+    def forward(self,x):
+        neg_index = (x<=0)
+        x[neg_index]=0
+        return x
+    def __repr__(self):
+        return "(ReLU)"
+    def __str__(self):
+        return "(ReLU)"
 
 
 class Residual(Module):
     def __init__(self,module):
+        super().__init__()
         self.module=module
-        self.super().__init__()
-    def foward(self,x):
+    def forward(self,x):
         y = self.module(x)
         output = x+y 
         return output
+    def __repr__(self):
+        return "(Residule:{})".format(self.module)
+    def __str__(self):
+        return "(Residule:{})".format(self.module)
+
+class Dropout(Module):
+    def __init__(self,p=0.2):
+        super().__init__()
+        self.p=0.2
+    def forward(self,x):
+        rand_prob = np.random.rand(*x.shape)
+        drop_index = rand_prob<self.p
+        x[drop_index]=0
+        return x
+    def __repr__(self):
+        return "(Dropout:{})".format(self.p)
+    def __str__(self):
+                return "(Dropout:{})".format(self.p)
 
 
 if __name__=='__main__':

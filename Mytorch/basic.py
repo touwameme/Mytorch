@@ -440,7 +440,45 @@ class Negate(TensorOp):
         # print("NEGATE G")
         return (-out_grad,)  
     
+class Getitem(TensorOp):
+    def __call__(self,inputs,index):
+        self.index = index
+        return super().__call__(op=self,inputs=inputs)
+    def compute(self,inputs):
+        # [inputs]: [Tensor,index]
+        assert(len(inputs)==1)
+        data =inputs[0]
+        self.oshape = data.shape
+        return data[self.index]
     
+    def gradient(self, out_grad, node):
+        output_grad = Tensor.make_const(np.zeros(self.oshape))
+        output_grad[self.index]=output_grad[self.index]+out_grad
+        return (output_grad,)  
+    
+
+
+class MaxTensor(TensorOp):
+    def __call__(self,inputs):
+        self.Ashape=inputs[0].shape
+        self.Bshape=inputs[1].shape
+        self.Ashape_aln,self.Bshape_aln=align_shape(self.Ashape,self.Bshape)
+        return super().__call__(op=self,inputs=inputs)
+    def compute(self,inputs):
+        return inputs[0]+inputs[1]
+    
+    def gradient(self, out_grad, node):
+        self.sumIndexA=np.where(self.Ashape_aln==1)[0]
+        self.sumIndexB=np.where(self.Bshape_aln==1)[0]
+
+        out_grad_A =out_grad.sum(dim=self.sumIndexA)
+        if(len(self.Ashape)!=len(out_grad_A.shape)):
+            out_grad_A=out_grad_A.reshape(self.Ashape)
+        out_grad_B =out_grad.sum(dim=self.sumIndexB)
+        if(len(self.Bshape)!=len(out_grad_B.shape)):
+            out_grad_B=out_grad_B.reshape(self.Bshape)
+        return out_grad_A, out_grad_B   
+
 #########Compute Graph ###############
 
 def __dfs(topo_dict,node,depth=0):
@@ -460,25 +498,34 @@ def find_topo_sort_reverse(output_tensor):
     __dfs(Dic,output_tensor)
     sorted_dict = sorted(Dic.items(), key=lambda item: item[1])
     return [k for k,v in sorted_dict]
-    
+
+
+GLOBAL_NO_GRAD=False
+
+def no_grad(no_grad=True):
+    GLOBAL_NO_GRAD=no_grad
 
 def compute_gradient_of_variables(output_tensor, out_grad):
+    if(GLOBAL_NO_GRAD):
+        print("no grad")
+        return 
     node_to_output_grads_list: Dict[Tensor, List[Tensor]] = {} # dict结构，用于存储partial adjoint
+    if(output_tensor.mask is not None):
+            out_grad[output_tensor.mask]=0
     node_to_output_grads_list[output_tensor] = [out_grad]
-    reverse_topo_order = (find_topo_sort_reverse(output_tensor)) # 请自行实现拓扑排序函数
-    # print([x.id for x in reverse_topo_order])
-    
+    reverse_topo_order = (find_topo_sort_reverse(output_tensor)) 
     for node in reverse_topo_order:
-        # print("Node {} Grads".format(node.id),node_to_output_grads_list[node])        
         node.grad = sum(node_to_output_grads_list[node]) # 求node的partial adjoint之和，存入属性grad
         if node.is_leaf():
             continue
+        if(node.mask is not None):
+            nodeG=copy.deepcopy(node.grad)
+            nodeG[node.mask]=0
+        else:
+            nodeG=node.grad
         node_grads=node.op.gradient(node.grad, node)
-        # print("Node gradients")
-        # print(node_grads)
+        
         for i, grad in enumerate(node_grads): # 计算node.inputs的partial adjoint
-            # print("Op ",node.op)
-            # print("cal grad ",i," grad is ",grad)
             j = node.inputs[i]
             if j not in node_to_output_grads_list:
                 node_to_output_grads_list[j] = []
@@ -495,6 +542,7 @@ class Tensor (Value):
         self.dtype=dtype
         self.grad=None
         self.cached_data=None
+        self.mask=None
         if (op is not None and not isinstance(op,TensorOp)): 
             # use Tensor(data) to init
             data=op
@@ -535,6 +583,7 @@ class Tensor (Value):
             if isinstance(data,Value):
                 tensor_data=data.realize_cached_data().astype(self.dtype)
             else:#NDarray
+                # print("MC ",data,type(data),isinstance(data,np.ndarray))
                 if not isinstance(data,np.ndarray):
                     if not isinstance(data,list):
                         data =[data]
@@ -581,7 +630,7 @@ class Tensor (Value):
         return Tensor.make_const(self.data)
     
     def backward(self,out_grad=None):
-        if out_grad:
+        if out_grad is not None:
             out_grad=out_grad
         else:
             out_grad=Tensor.make_const(np.ones(self.shape))
@@ -599,6 +648,7 @@ class Tensor (Value):
     
     def tensor_scalar_op(self,other,ops):
         # ops[EWiseOp,OpScalar,OpTensor]
+        # print("TSOP:",other)
         EWiseOp=ops[0]
         OpScalar=ops[1]
         OpTensor=ops[2]
@@ -675,6 +725,44 @@ class Tensor (Value):
         self.data =self.data.astype(self.dtype)
         return self
     
+    def __getitem__(self,index):
+        return  Getitem()([self],index)
+        
+    def __setitem__(self,index,value):
+        self.mask=index 
+        if(isinstance(value,Tensor)):
+            value_data = value.data
+        else:
+            value_data = np.array(value)
+        self.data[index]=np.array(value_data)
+        return  
     
-import torch.nn 
-from torch.nn import Softmax, CrossEntropyLoss
+    # def __eq__(self,other):
+    #     if(isinstance(other,Tensor)):
+    #         other=other.data 
+    #     return self.data==other
+    def __neq__(self,other):
+        if(isinstance(other,Tensor)):
+            other=other.data 
+        return self.data!=other
+    
+    def __lt__(self,other):
+        if(isinstance(other,Tensor)):
+            other=other.data 
+        return self.data<other
+    
+    def __gt__(self,other):
+        if(isinstance(other,Tensor)):
+            other=other.data 
+        return self.data>other
+    
+    def __ge__(self,other):
+        if(isinstance(other,Tensor)):
+            other=other.data 
+        return self.data>=other
+    
+    def __le__(self,other):
+        if(isinstance(other,Tensor)):
+            other=other.data 
+        return self.data<=other
+    

@@ -107,9 +107,10 @@ class Parameter(Tensor): # 声明一个类专门表示网络参数
         return 
             
     def __str__(self):
-        return "Parameter containing:\n("+super(Parameter,self).__repr__()+")\n"
+        return "Parameter containing:\n("+super(Parameter,self).__repr__()+" grad {}".format(self.grad)+")\n"
     def __repr__(self):
-        return "Parameter containing:\n("+super(Parameter,self).__repr__()+")\n"
+        return "Parameter containing:\n("+super(Parameter,self).__repr__()+" grad {}".format(self.grad)+")\n"
+
 
 if __name__=='__main__':
     class Dummy(Module):

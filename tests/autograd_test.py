@@ -1,5 +1,8 @@
 
 
+import sys
+sys.path.append('..')
+sys.path.append('.')
 import numpy as np
 from typing import Union, Tuple, List
 from abc import ABC, abstractmethod
